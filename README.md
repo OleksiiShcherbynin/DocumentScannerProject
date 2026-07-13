@@ -42,3 +42,21 @@ Run the automated launcher:
 ```
 
 *App opens locally at `http://localhost:8501`.*
+
+## Security
+
+This project was built with a documented threat model and defence-in-depth
+controls: uploaded files are validated (extension, size, magic bytes) and stored
+under sanitised paths, untrusted filenames are HTML-escaped to prevent XSS,
+untrusted document text is isolated from LLM instructions to limit prompt
+injection, internal errors are never leaked to the UI, secrets are loaded only
+from a git-ignored `.env`, and the app binds to `127.0.0.1`.
+
+A CI pipeline (`.github/workflows/security.yml`) runs on every push:
+
+- **SAST** — `bandit` static analysis of the source
+- **SCA** — `pip-audit` against pinned dependencies for known CVEs
+- **Secret scanning** — `gitleaks` across the git history
+
+See [SECURITY.md](SECURITY.md) for the full threat model, mitigations, and
+residual risks.
