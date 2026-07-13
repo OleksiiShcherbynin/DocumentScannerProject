@@ -25,3 +25,23 @@ COLLECTION_NAME = "documents"
 
 # ── Retrieval ──────────────────────────────────────────
 RETRIEVAL_K = 4
+
+# ── Upload / Security limits ───────────────────────────
+ALLOWED_EXTENSIONS = {".pdf", ".txt"}
+
+MAX_FILE_SIZE_MB = 50
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+
+def validate_config() -> list[str]:
+    """Return a list of missing required secrets (empty list means valid)."""
+    problems: list[str] = []
+
+    if not OPENAI_API_KEY or OPENAI_API_KEY.startswith("sk-your"):
+        problems.append("OPENAI_API_KEY is not set (LLM endpoint credentials).")
+    if not QDRANT_URL:
+        problems.append("QDRANT_URL is not set (vector database endpoint).")
+    if not QDRANT_API_KEY:
+        problems.append("QDRANT_API_KEY is not set (vector database credentials).")
+
+    return problems
