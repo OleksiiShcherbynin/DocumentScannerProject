@@ -4,10 +4,15 @@ RAG Document Assistant — Streamlit UI
 Run with:  streamlit run app.py
 """
 
+import html
+import logging
+
 import streamlit as st
-from config import OPENAI_API_KEY
+from config import validate_config
 from rag_engine import (
     save_uploaded_file,
+    cleanup_temp_file,
+    validate_upload,
     load_and_split_document,
     create_vector_store,
     get_retriever,
@@ -16,6 +21,12 @@ from rag_engine import (
     format_sources,
     summarize_document,
 )
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # ── Page config ────────────────────────────────────────────────────────────────
 
@@ -197,12 +208,12 @@ for key, val in defaults.items():
 with st.sidebar:
     st.markdown("## 📄 Document Upload")
 
-    # API key guard
-    if not OPENAI_API_KEY or OPENAI_API_KEY.startswith("sk-your"):
+    config_problems = validate_config()
+    if config_problems:
         st.warning(
-            "⚠️ **OpenAI API key not set.**\n\n"
-            "Create a `.env` file in the project root with:\n\n"
-            "```\nOPENAI_API_KEY=sk-...\n```"
+            "⚠️ **Configuration incomplete.**\n\n"
+            + "\n".join(f"- {p}" for p in config_problems)
+            + "\n\nCopy `.env.example` to `.env` and fill in the values."
         )
 
     uploaded_file = st.file_uploader(
@@ -215,19 +226,21 @@ with st.sidebar:
     if uploaded_file is not None:
         if st.button("🚀 Index Document", type="primary"):
             with st.spinner("Parsing & indexing…"):
+                file_path = None
                 try:
+                    validate_upload(uploaded_file)
                     file_path = save_uploaded_file(uploaded_file)
-                    chunks = load_and_split_document(file_path)
+                    chunks = load_and_split_document(
+                        file_path, source_name=uploaded_file.name
+                    )
                     vector_store = create_vector_store(chunks)
                     retriever = get_retriever(vector_store)
                     qa_chain = build_qa_chain(retriever)
 
-                    # Persist in session
                     st.session_state.vector_store = vector_store
                     st.session_state.qa_chain = qa_chain
                     st.session_state.indexed = True
 
-                    # Collect doc metadata
                     pages = set()
                     for c in chunks:
                         pages.add(c.metadata.get("page", 0))
@@ -237,11 +250,20 @@ with st.sidebar:
                         "chunks": len(chunks),
                         "size_kb": round(uploaded_file.size / 1024, 1),
                     }
-                    st.session_state.messages = []   # reset chat for new doc
+                    st.session_state.messages = []
                     st.success("✅ Document indexed successfully!")
 
-                except Exception as e:
-                    st.error(f"❌ Indexing failed: {e}")
+                except ValueError as e:
+                    st.error(f"❌ {e}")
+                except Exception:
+                    logger.exception("Indexing failed")
+                    st.error(
+                        "❌ Indexing failed due to an internal error. "
+                        "Please try again or check the application logs."
+                    )
+                finally:
+                    if file_path:
+                        cleanup_temp_file(file_path)
 
     # ── Status & info ──────────────────────────────────
     st.markdown("---")
@@ -254,7 +276,7 @@ with st.sidebar:
         )
         st.markdown(f"""
 <div class="doc-info-card">
-    <div class="metric"><span class="label">File</span><span class="value">{info['name']}</span></div>
+    <div class="metric"><span class="label">File</span><span class="value">{html.escape(str(info['name']))}</span></div>
     <div class="metric"><span class="label">Size</span><span class="value">{info['size_kb']} KB</span></div>
     <div class="metric"><span class="label">Pages</span><span class="value">{info['pages']}</span></div>
     <div class="metric"><span class="label">Chunks</span><span class="value">{info['chunks']}</span></div>
@@ -336,8 +358,11 @@ if prompt := st.chat_input("Ask a question about your document…"):
                         "content": answer,
                         "sources": sources_text,
                     })
-                except Exception as e:
-                    error_msg = f"❌ Error: {e}"
+                except Exception:
+                    logger.exception("Query failed")
+                    error_msg = (
+                        "❌ Something went wrong while answering. Please try again."
+                    )
                     st.error(error_msg)
                     st.session_state.messages.append({
                         "role": "assistant",
